@@ -14,6 +14,11 @@ Terraform module that creates a dedicated Tamnoon service account with Workload 
 
 ## Prerequisites
 
+### Terraform
+
+- Terraform >= 1.3.0
+- `hashicorp/google` provider >= 5.0.0, < 7.0.0
+
 ### APIs
 
 The following APIs must be enabled on the identity project:
@@ -27,6 +32,12 @@ The following APIs must be enabled on the identity project:
 
 The identity running `terraform apply` needs full lifecycle permissions (create, read, update, delete) on the resources the module manages. Terraform reads every resource on each `plan`/`apply` to refresh state.
 
+*Project data source:*
+
+| Permission | Purpose |
+|-----------|---------|
+| `resourcemanager.projects.get` | Read identity project number (`data.google_project`) |
+
 *Service account management:*
 
 | Permission | Purpose |
@@ -36,8 +47,7 @@ The identity running `terraform apply` needs full lifecycle permissions (create,
 | `iam.serviceAccounts.list` | List service accounts in the project |
 | `iam.serviceAccounts.update` | Update service account attributes |
 | `iam.serviceAccounts.delete` | Remove the service account (`terraform destroy`) |
-| `iam.serviceAccounts.getIamPolicy` | Read SA IAM bindings before modification |
-| `iam.serviceAccounts.setIamPolicy` | Bind the WIF principal to the service account |
+| `iam.serviceAccounts.setIamPolicy` | Bind the WIF principal to the service account (used by `google_service_account_iam_member`) |
 
 > Alternatively, `roles/iam.serviceAccountAdmin` covers all of the above.
 
@@ -58,16 +68,15 @@ The identity running `terraform apply` needs full lifecycle permissions (create,
 
 > Alternatively, `roles/iam.workloadIdentityPoolAdmin` covers all of the above.
 
-*IAM role bindings (scope-dependent):*
+*IAM role bindings (scope-dependent) — the module uses `google_*_iam_member` (additive, no read needed):*
 
 | Permission | Purpose |
 |-----------|---------|
-| `resourcemanager.projects.getIamPolicy` | Read project IAM policy (Terraform refresh) |
 | `resourcemanager.projects.setIamPolicy` | Assign roles at project level |
 
-For folder or org scope, add the corresponding permissions at the target scope:
-- **Folder**: `resourcemanager.folders.getIamPolicy` + `resourcemanager.folders.setIamPolicy`
-- **Organization**: `resourcemanager.organizations.getIamPolicy` + `resourcemanager.organizations.setIamPolicy`
+For folder or org scope, add the corresponding permission at the target scope:
+- **Folder**: `resourcemanager.folders.setIamPolicy`
+- **Organization**: `resourcemanager.organizations.setIamPolicy`
 
 See [Tamnoon Public Permissions](https://github.com/tamnoon-io/Tamnoon-Public-Permissions/blob/main/Cloud_Providers/GCP/gcp-onboarding-permissions.md#1-prerequisites) for full details.
 
@@ -174,14 +183,16 @@ This removes the Tamnoon service account, WIF pool/provider, and all IAM binding
 
 | Variable | Type | Required | Default | Description |
 |----------|------|----------|---------|-------------|
-| `identity_project_id` | `string` | Yes | — | GCP project ID where the service account and WIF resources are created |
+| `identity_project_id` | `string` | Yes | — | GCP project ID where the Tamnoon service account and WIF resources are created |
 | `trusted_aws_role_name` | `string` | Yes | — | AWS IAM role name, format: `gcp-onboarding-trust-<customer-tenant-id>` (provided during onboarding) |
-| `service_account_suffix` | `string` | No | `"federate-service-account"` | Appended to `tamnoon-` for the service account ID (total must be <=30 chars) |
-| `identity_suffix` | `string` | No | `"federate"` | Used to derive pool ID (`tamnoon-pool-<suffix>`) and provider ID (`tamnoon-aws-<suffix>`, each <=32 chars) |
-| `aws_account_id` | `string` | No | `"112665896816"` | Tamnoon AWS account ID |
+| `service_account_suffix` | `string` | Yes* | — | Appended to `tamnoon-` for the service account ID (total must be <=30 chars). Use `federate-svc-account` |
+| `identity_suffix` | `string` | Yes* | — | Used to derive pool ID (`tamnoon-pool-<suffix>`) and provider ID (`tamnoon-aws-<suffix>`, each <=32 chars). Use `federate` |
+| `aws_account_id` | `string` | Yes* | — | AWS account ID trusted by the WIF provider. Use `112665896816` (Tamnoon) |
 | `project_ids` | `string` | No | `""` | Semicolon-delimited GCP project IDs for project-scope bindings |
 | `folder_ids` | `string` | No | `""` | Semicolon-delimited GCP folder IDs for folder-scope bindings |
 | `organization_id` | `string` | No | `null` | GCP organization ID — when set, overrides `project_ids` and `folder_ids` |
+
+> \* These variables have known values and should use defaults in a future update to `variables.tf` (see [Suggested Changes](#suggested-changes-to-variablestf)).
 
 ## Outputs
 
@@ -213,3 +224,26 @@ The module assigns these read-only roles to the Tamnoon service account at the c
 | `roles/serviceusage.serviceUsageConsumer` | View enabled APIs and service usage quotas |
 
 See [Roles Assigned to Tamnoon Service Account](https://github.com/tamnoon-io/Tamnoon-Public-Permissions/blob/main/Cloud_Providers/GCP/gcp-onboarding-permissions.md#2-roles-assigned-to-tamnoon-service-account) for detailed justification of each role.
+
+## Suggested Changes to `variables.tf`
+
+The following variables have known, constant values and should be given defaults to simplify customer usage:
+
+```hcl
+variable "service_account_suffix" {
+  # ... existing validations ...
+  default = "federate-svc-account"
+}
+
+variable "identity_suffix" {
+  # ... existing validations ...
+  default = "federate"
+}
+
+variable "aws_account_id" {
+  # ... existing validations ...
+  default = "112665896816"
+}
+```
+
+This reduces the required customer inputs from 5 to 2 (`identity_project_id` + `trusted_aws_role_name`) plus the scope variable.
